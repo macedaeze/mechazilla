@@ -251,5 +251,98 @@ print("\n=========== ESPESOR REQUERIDO PARA CHS Ø700 mm ===========\n")
 print(df_t.to_string(index=False))
 
 
+# ============================================================
+# CÁLCULO DE DEFORMACIÓN EN LA BARRA MÁS CRÍTICA (MÁX |σ|)
+# ============================================================
 
+# Tomamos el área real usada en el modelo (A_actual) y el material del modelo
+E_model = 210e9 
+
+# Buscar la barra con mayor esfuerzo absoluto
+crit_bar = None
+crit_sigma = 0.0
+
+for m in truss.members.values():
+    axial = m.max_axial()      # fuerza axial en N (tensión +, compresión -)
+    sigma = axial / 0.063146   # esfuerzo en Pa, usando el área actual
+    if abs(sigma) > abs(crit_sigma):
+        crit_sigma = sigma
+        crit_bar = m
+
+# Obtener longitud geométrica de la barra crítica a partir de sus nodos
+i_node = crit_bar.i_node
+j_node = crit_bar.j_node
+
+# En algunas versiones de PyNite, i_node / j_node pueden ser strings con el nombre
+from collections.abc import Hashable
+if isinstance(i_node, Hashable) and isinstance(i_node, str):
+    i_node = truss.nodes[i_node]
+if isinstance(j_node, Hashable) and isinstance(j_node, str):
+    j_node = truss.nodes[j_node]
+
+L_crit = ((j_node.X - i_node.X)**2 +
+          (j_node.Y - i_node.Y)**2 +
+          (j_node.Z - i_node.Z)**2) ** 0.5
+
+# Deformación unitaria y deformación total
+eps_crit = crit_sigma / E_model          # deformación unitaria (adimensional)
+delta_crit = eps_crit * L_crit           # deformación total (m)
+
+print("\n=========== DEFORMACIÓN EN BARRA CRÍTICA ===========\n")
+print(f"Barra crítica: {crit_bar.name}")
+print(f"Esfuerzo σ = {crit_sigma:.3e} Pa")
+print(f"Longitud L = {L_crit:.3f} m")
+print(f"Deformación unitaria ε = {eps_crit:.3e}")
+print(f"Deformación total δ = {delta_crit*1000:.3f} mm")
+
+
+
+# ============================================================
+# DESPLAZAMIENTO EN NODO 11 (Z) POR CASTIGLIANO - FORMULA Σ(Ni^2 Li / (E A P))
+# ============================================================
+
+# Datos del material y sección del MODELO (los mismos que usaste al definir 'Steel')
+E_model = 210e9      # Pa
+A_model = 0.063146          # m² (la A que usaste al crear 'TrussSection')
+
+# Carga vertical aplicada en el nodo 11 (módulo, en N)
+P_v = 2697000.0      # N
+
+delta_11_z_cast = 0.0  # acumulador
+
+for m in truss.members.values():
+    # Fuerza axial en la barra i (N_i)
+    Ni = m.max_axial()  # N
+
+    # Longitud de la barra i (Li)
+    i_node = m.i_node
+    j_node = m.j_node
+    dx = j_node.X - i_node.X
+    dy = j_node.Y - i_node.Y
+    dz = j_node.Z - i_node.Z
+    Li = (dx**2 + dy**2 + dz**2) ** 0.5  # m
+
+    # Aporte de la barra i a la suma: Ni^2 * Li / (E * A * P)
+    delta_11_z_cast += (Ni**2 * Li) / (E_model * A_model * P_v)
+
+print("\n=========== DESPLAZAMIENTO EN NODO 11 (Z) POR CASTIGLIANO (Σ N_i² L_i / E A P) ===========\n")
+print(f"δ_11,z = {delta_11_z_cast:.6e} m")
+print(f"δ_11,z = {delta_11_z_cast*1000:.6f} mm")
+
+
+# (Opcional) Comparar con el desplazamiento que da directamente PyNite
+print("\n--- COMPARACIÓN CON DESPLAZAMIENTO FEM (PyNite) ---")
+
+node11 = truss.nodes['N11']
+dz_raw = node11.DZ  # puede ser dict o float según versión
+
+# Si es un dict (desplazamientos por combinación de carga), tomo el primero
+if isinstance(dz_raw, dict):
+    # Por ejemplo 'Combo 1'. Tomo el primer valor del diccionario.
+    dz_val = list(dz_raw.values())[0]
+else:
+    dz_val = dz_raw  # ya es un número
+
+print(f"DZ en N11 segun modelo original = {dz_val:.6e} m")
+print(f"DZ en N11 segun modelo original = {dz_val*1000:.6f} mm")
 
